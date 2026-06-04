@@ -9,13 +9,15 @@ from dotenv import load_dotenv
 load_dotenv()
 
 # ---------------------------------------------------------------------------
-# Standard provider keys
+# Logging / tracing (set PROXY_DEBUG=1 to enable request/response logging)
+# ---------------------------------------------------------------------------
+DEBUG_LOGGING = os.getenv("PROXY_DEBUG", "0").lower() in ("1", "true", "yes", "on")
+
+# ---------------------------------------------------------------------------
+# Standard provider keys (only for providers with non-OpenAI-compatible SDKs)
 # ---------------------------------------------------------------------------
 API_KEYS = {
-    "openai":    os.getenv("OPENAI_API_KEY", ""),
-    "gemini":    os.getenv("GEMINI_API_KEY", ""),
     "anthropic": os.getenv("ANTHROPIC_API_KEY", ""),
-    "kimi":      os.getenv("KIMI_API_KEY", ""),
 }
 
 # ---------------------------------------------------------------------------
@@ -38,9 +40,30 @@ AZURE_CONFIG = {
 AZURE_DEPLOYMENTS: dict = {}
 
 # ---------------------------------------------------------------------------
+# AWS Bedrock - uses boto3 Converse API with standard AWS credential chain.
+# Auth: AWS_ACCESS_KEY_ID/AWS_SECRET_ACCESS_KEY, ~/.aws/credentials, or IAM role.
+# ---------------------------------------------------------------------------
+BEDROCK_CONFIG = {
+    "region":  os.getenv("AWS_REGION", os.getenv("AWS_DEFAULT_REGION", "us-east-1")),
+    "profile": os.getenv("AWS_PROFILE", None),  # optional — uses default credential chain
+}
+
+# ---------------------------------------------------------------------------
 # OpenAI-compatible providers (share the same SDK, different base_url + key)
 # ---------------------------------------------------------------------------
 OPENAI_COMPAT_PROVIDERS = {
+    "openai": {
+        "api_key":  os.getenv("OPENAI_API_KEY", ""),
+        "base_url": "https://api.openai.com/v1",
+    },
+    "gemini": {
+        "api_key":  os.getenv("GEMINI_API_KEY", ""),
+        "base_url": "https://generativelanguage.googleapis.com/v1beta/openai/",
+    },
+    "kimi": {
+        "api_key":  os.getenv("KIMI_API_KEY", ""),
+        "base_url": "https://api.moonshot.ai/v1",
+    },
     "xai": {
         "api_key":  os.getenv("XAI_API_KEY", ""),
         "base_url": "https://api.x.ai/v1",
@@ -103,19 +126,40 @@ PROVIDER_REGISTRY = [
     "perplexity/sonar-pro",
     "perplexity/sonar-reasoning",
     # Gemini
+    "gemini/gemini-2.5-pro",
+    "gemini/gemini-2.5-flash",
+    "gemini/gemini-2.5-flash-lite",
+    "gemini/gemini-2.0-flash",
     "gemini/gemini-1.5-pro",
     "gemini/gemini-1.5-flash",
-    "gemini/gemini-2.0-flash",
     # Anthropic / Claude
     "anthropic/claude-3-5-sonnet-20241022",
     "anthropic/claude-haiku-4-5",
     "anthropic/claude-sonnet-4-5",
     "anthropic/claude-opus-4-5",
     # Kimi (Moonshot AI)
+    "kimi/kimi-k2.6",
+    "kimi/kimi-k2.5",
     "kimi/moonshot-v1-8k",
     "kimi/moonshot-v1-32k",
     "kimi/moonshot-v1-128k",
     # Azure OpenAI - uncomment and add your deployment names
     # "azure/my-gpt4o-deployment",
     # "azure/my-gpt35-deployment",
+    # AWS Bedrock - uncomment and use your model/inference-profile IDs
+    # "bedrock/us.anthropic.claude-sonnet-4-20250514-v1:0",
+    # "bedrock/us.amazon.nova-pro-v1:0",
+    # "bedrock/us.amazon.nova-lite-v1:0",
+    # "bedrock/us.meta.llama3-1-70b-instruct-v1:0",
 ]
+
+# ---------------------------------------------------------------------------
+# Extra models from environment - quick way to add models without editing this file.
+# Set EXTRA_MODELS as a comma-separated list, e.g.:
+#   EXTRA_MODELS="openai/gpt-4o-2025,gemini/gemini-2.5-pro-preview,kimi/kimi-k2.6"
+# ---------------------------------------------------------------------------
+_extra = os.getenv("EXTRA_MODELS", "").strip()
+if _extra:
+    PROVIDER_REGISTRY.extend(
+        m.strip() for m in _extra.split(",") if m.strip() and m.strip() not in PROVIDER_REGISTRY
+    )
