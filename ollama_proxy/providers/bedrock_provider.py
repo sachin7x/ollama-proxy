@@ -18,8 +18,6 @@ Model naming:
 
 from typing import AsyncIterator
 import asyncio
-import boto3
-from botocore.config import Config as BotoConfig
 from .base import BaseProvider
 
 
@@ -28,6 +26,14 @@ class BedrockProvider(BaseProvider):
     def __init__(self, model: str, region: str, profile: str | None = None):
         # Bedrock doesn't use an api_key, pass empty string to satisfy base class
         super().__init__(api_key="", model=model)
+        try:
+            import boto3
+            from botocore.config import Config as BotoConfig
+        except ImportError as e:
+            raise ImportError(
+                "Bedrock provider requires the 'boto3' package. "
+                "Install with: pip install ollama-proxy[bedrock]"
+            ) from e
         session_kwargs = {}
         if profile:
             session_kwargs["profile_name"] = profile

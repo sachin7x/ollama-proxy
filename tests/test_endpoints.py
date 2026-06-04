@@ -16,11 +16,7 @@ import pytest
 from unittest.mock import AsyncMock, patch, MagicMock
 from fastapi.testclient import TestClient
 
-# ── app import ────────────────────────────────────────────────────────────────
-import sys, os
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
-
-from main import app
+from ollama_proxy import app
 
 client = TestClient(app)
 
@@ -94,7 +90,7 @@ class TestShowModel:
         assert "error" in r.json()
 
     def test_show_all_registry_models(self):
-        from config import PROVIDER_REGISTRY
+        from ollama_proxy.config import PROVIDER_REGISTRY
         for model in PROVIDER_REGISTRY:
             r = client.post("/api/show", json={"model": model})
             assert r.status_code == 200, f"show failed for {model}"
@@ -141,7 +137,7 @@ class TestModelManagement:
 # /api/chat  (mocked provider)
 # =============================================================================
 
-MOCK_PROVIDER_PATH = "main.get_provider"
+MOCK_PROVIDER_PATH = "ollama_proxy.server.get_provider"
 
 
 def make_mock_provider(response_text="Hello from mock!"):

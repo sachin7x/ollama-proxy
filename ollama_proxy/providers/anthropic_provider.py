@@ -9,7 +9,6 @@ Anthropic quirks handled here:
 """
 
 from typing import AsyncIterator
-import anthropic
 from .base import BaseProvider
 
 
@@ -17,6 +16,13 @@ class AnthropicProvider(BaseProvider):
 
     def __init__(self, api_key: str, model: str):
         super().__init__(api_key, model)
+        try:
+            import anthropic
+        except ImportError as e:
+            raise ImportError(
+                "Anthropic provider requires the 'anthropic' package. "
+                "Install with: pip install ollama-proxy[anthropic]"
+            ) from e
         self.client = anthropic.AsyncAnthropic(api_key=api_key)
 
     def _split_messages(self, messages: list[dict]) -> tuple[str, list[dict]]:

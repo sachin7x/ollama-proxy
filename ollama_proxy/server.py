@@ -1,105 +1,95 @@
 """
-Fake Ollama API Server
-======================
-Speaks the Ollama REST protocol on port 11434, routes to cloud LLM providers.
+ollama-proxy — speak the Ollama API protocol on port 11434, route to cloud LLMs.
 
-Model naming (set as the "model" field in your client):
-  openai/gpt-4o                      xai/grok-2
-  openai/gpt-4o-mini                 groq/llama-3.3-70b-versatile
-  gemini/gemini-2.5-pro              mistral/mistral-large-latest
-  anthropic/claude-sonnet-4-5        deepseek/deepseek-chat
-  kimi/kimi-k2.6                     together/meta-llama/Llama-3...
-  azure/<deployment-name>            perplexity/sonar-pro
-  bedrock/us.anthropic.claude-...
+Wire formats served simultaneously:
+  /api/*          Ollama protocol  (Open WebUI, ollama SDK, LangChain Ollama)
+  /v1/*           OpenAI protocol  (Copilot, Continue, Cursor, OpenAI SDK)
 
-Run:
-  uvicorn main:app --host 0.0.0.0 --port 11434 --reload
-
-Optional env:
-  PROXY_DEBUG=1                  enable verbose request/response logging
-  EXTRA_MODELS=p1/m1,p2/m2       add models to /api/tags without editing config.py
+Optional env vars:
+  PROXY_DEBUG=1                     verbose request/response logging
+  PROXY_LOG_JSON=1                  JSON-formatted logs
+  PROXY_CONFIG_FILE=path.yaml       YAML config (providers + models)
+  EXTRA_MODELS=p1/m1,p2/m2          add models to /api/tags
+  PROVIDERS_<NAME>_API_KEY=...      auto-register an OpenAI-compat provider
+  PROVIDERS_<NAME>_BASE_URL=...
 """
 
-import time
+from __future__ import annotations
+
 import json
 import logging
-from typing import AsyncIterator
+import time
+import uuid
+from typing import Any, AsyncIterator
 
+import httpx
 from fastapi import FastAPI, Request
-from fastapi.responses import StreamingResponse, JSONResponse, PlainTextResponse
+from fastapi.responses import JSONResponse, PlainTextResponse, StreamingResponse
 
-from providers.anthropic_provider import AnthropicProvider
-from providers.azure_provider import AzureProvider
-from providers.bedrock_provider import BedrockProvider
-from providers.openai_compat_provider import OpenAICompatProvider
-from config import (
-    PROVIDER_REGISTRY,
+from . import __version__
+from .config import (
     API_KEYS,
     AZURE_CONFIG,
     AZURE_DEPLOYMENTS,
     BEDROCK_CONFIG,
-    OPENAI_COMPAT_PROVIDERS,
     DEBUG_LOGGING,
+    JSON_LOGGING,
+    OPENAI_COMPAT_PROVIDERS,
+    PROVIDER_REGISTRY,
+    PROVIDER_SETTINGS,
 )
-
-app = FastAPI(title="Fake Ollama Server", version="1.0.0")
+from .logging_config import configure_logging, new_request_id, request_id_ctx
+from .providers.anthropic_provider import AnthropicProvider
+from .providers.azure_provider import AzureProvider
+from .providers.bedrock_provider import BedrockProvider
+from .providers.openai_compat_provider import OpenAICompatProvider
+from .retry import with_retry_and_fallback
 
 # ---------------------------------------------------------------------------
-# Logging setup
+# Logging
 # ---------------------------------------------------------------------------
-logger = logging.getLogger("ollama-proxy")
-if DEBUG_LOGGING:
-    logging.basicConfig(level=logging.DEBUG, format="%(asctime)s [%(levelname)s] %(message)s")
-    logger.setLevel(logging.DEBUG)
-else:
-    logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
-    logger.setLevel(logging.INFO)
+logger = configure_logging(debug=DEBUG_LOGGING, json_format=JSON_LOGGING)
 
 
-def _log_request(endpoint: str, body: dict):
-    """Log request details when debug logging is enabled."""
-    if not DEBUG_LOGGING:
-        return
-    model = body.get("model", "?")
-    stream = body.get("stream", "?")
-    msgs = body.get("messages", [])
-    msg_count = len(msgs) if isinstance(msgs, list) else 0
-    tools = body.get("tools", [])
-    fmt = body.get("format", None)
-    logger.debug(
-        f"REQ {endpoint} | model={model} stream={stream} messages={msg_count} "
-        f"tools={len(tools) if tools else 0} format={fmt}"
-    )
-    if msgs and msg_count > 0:
-        last = msgs[-1]
-        content_preview = str(last.get("content", ""))[:100]
-        logger.debug(f"  last_msg: role={last.get('role')} content={content_preview}...")
+app = FastAPI(title="ollama-proxy", version=__version__)
 
 
-def _log_response(endpoint: str, status: int, detail: str = ""):
-    """Log response details when debug logging is enabled."""
-    if not DEBUG_LOGGING:
-        return
-    logger.debug(f"RES {endpoint} | status={status} {detail}")
+# ---------------------------------------------------------------------------
+# Request-ID middleware (correlation IDs for structured logging)
+# ---------------------------------------------------------------------------
+@app.middleware("http")
+async def request_id_middleware(request: Request, call_next):
+    rid = request.headers.get("x-request-id") or new_request_id()
+    token = request_id_ctx.set(rid)
+    t0 = time.perf_counter()
+    try:
+        response = await call_next(request)
+    finally:
+        elapsed_ms = (time.perf_counter() - t0) * 1000
+        request_id_ctx.reset(token)
+    response.headers["x-request-id"] = rid
+    if DEBUG_LOGGING:
+        logger.debug(
+            f"{request.method} {request.url.path} "
+            f"-> {response.status_code} ({elapsed_ms:.1f}ms)"
+        )
+    return response
 
 
 # ---------------------------------------------------------------------------
 # Provider routing
 # ---------------------------------------------------------------------------
-
 def get_provider(model: str):
-    """Parse 'provider/model-name' and return the right provider instance."""
+    """Parse 'provider/model-id' and return a provider instance."""
     if "/" in model:
         prefix, model_id = model.split("/", 1)
     else:
         prefix, model_id = "openai", model
-
     prefix = prefix.lower()
 
-    # Providers with non-OpenAI-compatible SDKs
     if prefix in ("anthropic", "claude"):
         return AnthropicProvider(api_key=API_KEYS["anthropic"], model=model_id)
-    elif prefix == "azure":
+    if prefix == "azure":
         cfg = AZURE_DEPLOYMENTS.get(model_id, AZURE_CONFIG)
         return AzureProvider(
             api_key=cfg["api_key"],
@@ -107,15 +97,13 @@ def get_provider(model: str):
             endpoint=cfg["endpoint"],
             api_version=cfg["api_version"],
         )
-    elif prefix == "bedrock":
+    if prefix == "bedrock":
         return BedrockProvider(
             model=model_id,
             region=BEDROCK_CONFIG["region"],
             profile=BEDROCK_CONFIG["profile"],
         )
-
-    # OpenAI-compatible providers (OpenAI, Kimi, xAI, Groq, Mistral, etc.)
-    elif prefix in OPENAI_COMPAT_PROVIDERS:
+    if prefix in OPENAI_COMPAT_PROVIDERS:
         cfg = OPENAI_COMPAT_PROVIDERS[prefix]
         return OpenAICompatProvider(
             api_key=cfg["api_key"],
@@ -123,40 +111,122 @@ def get_provider(model: str):
             base_url=cfg["base_url"],
         )
 
-    else:
-        supported = ", ".join(
-            ["anthropic", "azure", "bedrock"]
-            + list(OPENAI_COMPAT_PROVIDERS.keys())
-        )
-        raise ValueError(
-            f"Unknown provider prefix: '{prefix}'. Supported: {supported}"
-        )
+    supported = ", ".join(
+        ["anthropic", "azure", "bedrock"] + sorted(OPENAI_COMPAT_PROVIDERS.keys())
+    )
+    raise ValueError(f"Unknown provider prefix: '{prefix}'. Supported: {supported}")
+
+
+def _provider_call_factory(model: str, op: str, *args, **kwargs):
+    """Return a no-arg coroutine factory that calls the provider's `op` method
+    on the model. Used by retry/fallback to construct the fallback call."""
+
+    def factory(target_model: str):
+        async def call():
+            provider = get_provider(target_model)
+            method = getattr(provider, op)
+            return await method(*args, **kwargs)
+
+        return call
+
+    # When called for the primary, wrap as no-arg
+    return factory
 
 
 # ---------------------------------------------------------------------------
-# Health / version
+# Logging helpers
 # ---------------------------------------------------------------------------
+def _log_request(endpoint: str, body: dict) -> None:
+    if not DEBUG_LOGGING:
+        return
+    msgs = body.get("messages", []) or []
+    tools = body.get("tools", []) or []
+    logger.debug(
+        f"REQ {endpoint} model={body.get('model', '?')} "
+        f"stream={body.get('stream', '?')} messages={len(msgs)} "
+        f"tools={len(tools)} format={body.get('format')}"
+    )
 
+
+def _log_response(endpoint: str, status: int, detail: str = "") -> None:
+    if not DEBUG_LOGGING:
+        return
+    logger.debug(f"RES {endpoint} status={status} {detail}")
+
+
+# ---------------------------------------------------------------------------
+# Health / version / root
+# ---------------------------------------------------------------------------
 @app.get("/")
 async def root():
-    """Real Ollama returns plain text - some clients check for this exact string."""
+    """Real Ollama returns plain text — some clients check for this exact string."""
     return PlainTextResponse("Ollama is running")
 
 
 @app.get("/api/version")
 async def version():
+    # Some clients require >= 0.6.4
     return {"version": "0.6.5"}
+
+
+@app.get("/health")
+async def health():
+    """Lightweight health check — does not hit upstream providers."""
+    return {
+        "status": "ok",
+        "version": __version__,
+        "providers": {
+            "openai_compat": list(OPENAI_COMPAT_PROVIDERS.keys()),
+            "anthropic": bool(API_KEYS.get("anthropic")),
+            "azure": bool(AZURE_CONFIG.get("api_key") and AZURE_CONFIG.get("endpoint")),
+            "bedrock": bool(BEDROCK_CONFIG.get("region")),
+        },
+        "models_registered": len(PROVIDER_REGISTRY),
+    }
+
+
+@app.get("/health/providers")
+async def health_providers():
+    """Connectivity check — pings each OpenAI-compat provider's /models endpoint."""
+    results: dict[str, dict[str, Any]] = {}
+    async with httpx.AsyncClient(timeout=10) as client:
+        for prefix, cfg in OPENAI_COMPAT_PROVIDERS.items():
+            if not cfg.get("api_key"):
+                results[prefix] = {"status": "unconfigured", "detail": "no API key"}
+                continue
+            url = cfg["base_url"].rstrip("/") + "/models"
+            try:
+                r = await client.get(
+                    url, headers={"Authorization": f"Bearer {cfg['api_key']}"}
+                )
+                results[prefix] = {
+                    "status": "ok" if r.status_code < 400 else "error",
+                    "http_status": r.status_code,
+                    "url": url,
+                }
+            except httpx.HTTPError as e:
+                results[prefix] = {
+                    "status": "unreachable",
+                    "detail": f"{type(e).__name__}: {e}",
+                    "url": url,
+                }
+    overall = (
+        "ok"
+        if all(v.get("status") == "ok" for v in results.values())
+        else "degraded"
+    )
+    return {"overall": overall, "providers": results}
 
 
 # ---------------------------------------------------------------------------
 # Model listing
 # ---------------------------------------------------------------------------
-
 @app.get("/api/tags")
 async def list_models():
     """List all available models from PROVIDER_REGISTRY."""
     models = []
     for name in PROVIDER_REGISTRY:
+        family = name.split("/")[0] if "/" in name else "openai"
         models.append({
             "name": name,
             "model": name,
@@ -166,8 +236,8 @@ async def list_models():
             "details": {
                 "parent_model": "",
                 "format": "cloud",
-                "family": name.split("/")[0],
-                "families": [name.split("/")[0]],
+                "family": family,
+                "families": [family],
                 "parameter_size": "cloud",
                 "quantization_level": "none",
             },
@@ -177,37 +247,23 @@ async def list_models():
 
 @app.get("/api/ps")
 async def list_running():
-    """
-    List currently loaded/running models.
-    Cloud proxy has no VRAM concept; empty list keeps Open WebUI happy.
-    """
     return {"models": []}
 
 
 @app.post("/api/show")
 async def show_model(request: Request):
-    """
-    Show model information. Clients verify a model exists here before chatting.
-    Allows any 'prefix/model' as long as the prefix is configured —
-    so users don't have to register every model in PROVIDER_REGISTRY.
-    """
+    """Show model info. Accepts any 'prefix/model' if the prefix is configured."""
     body = await request.json()
     model = body.get("model", "")
 
-    # Check if the prefix is configured (registry membership is optional)
-    if "/" in model:
-        prefix = model.split("/", 1)[0].lower()
-    else:
-        prefix = "openai"
-
+    prefix = model.split("/", 1)[0].lower() if "/" in model else "openai"
     known_prefixes = (
         {"anthropic", "claude", "azure", "bedrock"}
         | set(OPENAI_COMPAT_PROVIDERS.keys())
     )
     if prefix not in known_prefixes and model not in PROVIDER_REGISTRY:
         return JSONResponse(
-            status_code=404,
-            content={"error": f"model '{model}' not found"}
+            status_code=404, content={"error": f"model '{model}' not found"}
         )
 
     family = model.split("/")[0] if "/" in model else "openai"
@@ -233,15 +289,10 @@ async def show_model(request: Request):
 
 
 # ---------------------------------------------------------------------------
-# Model management (mocked - not applicable for a cloud proxy)
+# Model management — mocked for cloud proxy
 # ---------------------------------------------------------------------------
-
 @app.post("/api/pull")
 async def pull_model(request: Request):
-    """
-    Mock pull with streaming progress events so clients that iterate
-    the NDJSON stream don't hang waiting for a response.
-    """
     body = await request.json()
     model = body.get("model", "unknown")
     stream = body.get("stream", True)
@@ -270,7 +321,7 @@ async def copy_model(request: Request):
 async def push_model(request: Request):
     return JSONResponse(
         status_code=501,
-        content={"error": "push is not supported by this cloud proxy"}
+        content={"error": "push is not supported by this cloud proxy"},
     )
 
 
@@ -278,21 +329,15 @@ async def push_model(request: Request):
 async def create_model(request: Request):
     return JSONResponse(
         status_code=501,
-        content={"error": "create is not supported by this cloud proxy"}
+        content={"error": "create is not supported by this cloud proxy"},
     )
 
 
 # ---------------------------------------------------------------------------
 # Embeddings
 # ---------------------------------------------------------------------------
-
 @app.post("/api/embeddings")
 async def embeddings_legacy(request: Request):
-    """
-    Legacy embeddings (pre-v0.1.33).
-    Input:  {"model": "...", "prompt": "..."}
-    Output: {"embedding": [...]}
-    """
     body = await request.json()
     model = body.get("model", "openai/text-embedding-3-small")
     prompt = body.get("prompt", "")
@@ -307,19 +352,13 @@ async def embeddings_legacy(request: Request):
     except NotImplementedError:
         return JSONResponse(
             status_code=400,
-            content={"error": f"Provider '{model.split('/')[0]}' does not support embeddings."}
+            content={"error": f"Provider '{model.split('/')[0]}' does not support embeddings."},
         )
-
     return {"embedding": embedding}
 
 
 @app.post("/api/embed")
 async def embeddings_new(request: Request):
-    """
-    New embeddings endpoint (v0.1.33+). Used by most modern Ollama clients.
-    Input:  {"model": "...", "input": "string" | ["string", ...]}
-    Output: {"model": "...", "embeddings": [[...], ...]}
-    """
     body = await request.json()
     model = body.get("model", "openai/text-embedding-3-small")
     input_data = body.get("input", "")
@@ -335,9 +374,8 @@ async def embeddings_new(request: Request):
     except NotImplementedError:
         return JSONResponse(
             status_code=400,
-            content={"error": f"Provider '{model.split('/')[0]}' does not support embeddings."}
+            content={"error": f"Provider '{model.split('/')[0]}' does not support embeddings."},
         )
-
     return {
         "model": model,
         "embeddings": embeddings,
@@ -348,27 +386,23 @@ async def embeddings_new(request: Request):
 
 
 # ---------------------------------------------------------------------------
-# Generation
+# Generation (Ollama protocol)
 # ---------------------------------------------------------------------------
-
 @app.post("/api/generate")
 async def generate(request: Request):
-    """Ollama /api/generate - raw text completion."""
     body = await request.json()
     model = body.get("model", "openai/gpt-4o-mini")
     prompt = body.get("prompt", "")
     system = body.get("system", "")
     stream = body.get("stream", True)
     options = body.get("options", {})
-    fmt = body.get("format", None)
+    fmt = body.get("format")
 
     _log_request("/api/generate", body)
-
     messages = []
     if system:
         messages.append({"role": "system", "content": system})
     messages.append({"role": "user", "content": prompt})
-
     if fmt:
         options["_format"] = fmt
 
@@ -381,15 +415,27 @@ async def generate(request: Request):
     if stream:
         return StreamingResponse(
             _stream_generate(provider, model, messages, options),
-            media_type="application/x-ndjson"
+            media_type="application/x-ndjson",
         )
 
     try:
+        async def _primary():
+            return await provider.chat(messages, stream=False, options=options)
+
+        def _fb_factory(target: str):
+            async def call():
+                p = get_provider(target)
+                return await p.chat(messages, stream=False, options=options)
+            return call
+
         t0 = _now_ns()
-        content = await provider.chat(messages, stream=False, options=options)
+        content = await with_retry_and_fallback(
+            model, _primary, settings=PROVIDER_SETTINGS, fallback_call_factory=_fb_factory
+        )
         duration = _now_ns() - t0
     except Exception as e:
         return JSONResponse(status_code=502, content={"error": str(e)})
+
     return {
         "model": model,
         "created_at": _iso_now(),
@@ -408,14 +454,13 @@ async def generate(request: Request):
 
 @app.post("/api/chat")
 async def chat(request: Request):
-    """Ollama /api/chat - multi-turn chat completion."""
     body = await request.json()
     model = body.get("model", "openai/gpt-4o-mini")
     messages = body.get("messages", [])
     stream = body.get("stream", True)
     options = body.get("options", {})
-    tools = body.get("tools", None)
-    fmt = body.get("format", None)
+    tools = body.get("tools")
+    fmt = body.get("format")
 
     _log_request("/api/chat", body)
 
@@ -425,7 +470,6 @@ async def chat(request: Request):
         _log_response("/api/chat", 400, str(e))
         return JSONResponse(status_code=400, content={"error": str(e)})
 
-    # Pass tools and format via options for providers that support them
     if tools:
         options["_tools"] = tools
     if fmt:
@@ -434,12 +478,23 @@ async def chat(request: Request):
     if stream:
         return StreamingResponse(
             _stream_chat(provider, model, messages, options),
-            media_type="application/x-ndjson"
+            media_type="application/x-ndjson",
         )
 
     try:
+        async def _primary():
+            return await provider.chat(messages, stream=False, options=options)
+
+        def _fb_factory(target: str):
+            async def call():
+                p = get_provider(target)
+                return await p.chat(messages, stream=False, options=options)
+            return call
+
         t0 = _now_ns()
-        content = await provider.chat(messages, stream=False, options=options)
+        content = await with_retry_and_fallback(
+            model, _primary, settings=PROVIDER_SETTINGS, fallback_call_factory=_fb_factory
+        )
         duration = _now_ns() - t0
     except Exception as e:
         _log_response("/api/chat", 502, str(e))
@@ -462,15 +517,11 @@ async def chat(request: Request):
 
 
 # ---------------------------------------------------------------------------
-# Streaming helpers
+# Streaming helpers (Ollama protocol)
 # ---------------------------------------------------------------------------
-
-async def _stream_chat(
-    provider, model: str, messages: list, options: dict
-) -> AsyncIterator[str]:
+async def _stream_chat(provider, model: str, messages: list, options: dict) -> AsyncIterator[str]:
     t0 = _now_ns()
     eval_count = 0
-
     try:
         async for chunk in provider.chat_stream(messages, options=options):
             eval_count += len(chunk.split())
@@ -506,12 +557,9 @@ async def _stream_chat(
     }) + "\n"
 
 
-async def _stream_generate(
-    provider, model: str, messages: list, options: dict
-) -> AsyncIterator[str]:
+async def _stream_generate(provider, model: str, messages: list, options: dict) -> AsyncIterator[str]:
     t0 = _now_ns()
     eval_count = 0
-
     try:
         async for chunk in provider.chat_stream(messages, options=options):
             eval_count += len(chunk.split())
@@ -549,24 +597,19 @@ async def _stream_generate(
 
 
 # ---------------------------------------------------------------------------
-# OpenAI-compatible endpoints (used by Copilot, Continue, etc.)
+# OpenAI-compatible endpoints (for Copilot, Continue, Cursor, OpenAI SDK)
 # ---------------------------------------------------------------------------
-
 @app.post("/v1/chat/completions")
 async def openai_chat_completions(request: Request):
-    """OpenAI-compatible /v1/chat/completions — for clients that use OpenAI format."""
     body = await request.json()
     model = body.get("model", "openai/gpt-4o-mini")
     messages = body.get("messages", [])
     stream = body.get("stream", False)
-    tools = body.get("tools", None)
+    tools = body.get("tools")
 
     _log_request("/v1/chat/completions", body)
 
-    # Map OpenAI params to our options format
-    # Note: we intentionally skip temperature/top_p unless they are non-default,
-    # because some models (e.g. kimi-k2.5) reject custom temperature values.
-    options = {}
+    options: dict[str, Any] = {}
     if "max_tokens" in body:
         options["max_tokens"] = body["max_tokens"]
     if "max_completion_tokens" in body:
@@ -582,34 +625,52 @@ async def openai_chat_completions(request: Request):
         provider = get_provider(model)
     except ValueError as e:
         _log_response("/v1/chat/completions", 400, str(e))
-        return JSONResponse(status_code=400, content={"error": {"message": str(e), "type": "invalid_request_error"}})
+        return JSONResponse(
+            status_code=400,
+            content={"error": {"message": str(e), "type": "invalid_request_error"}},
+        )
 
-    # Disable thinking/reasoning for Kimi k2 models when called via OpenAI compat
-    # endpoint (Copilot etc. can't handle reasoning tokens in the response)
-    extra_body = {}
+    # Disable thinking for Kimi k2 family on the OpenAI-compat endpoint
+    extra_body: dict[str, Any] = {}
     prefix = model.split("/")[0].lower() if "/" in model else ""
     if prefix == "kimi":
         extra_body["thinking"] = {"type": "disabled"}
-
     if extra_body:
         options["_extra_body"] = extra_body
 
     if stream:
         return StreamingResponse(
             _stream_openai_chat(provider, model, messages, options),
-            media_type="text/event-stream"
+            media_type="text/event-stream",
         )
 
     try:
-        chat_full = getattr(provider, "chat_full", None)
-        if chat_full:
-            full = await chat_full(messages, options=options)
-        else:
+        async def _primary():
+            chat_full = getattr(provider, "chat_full", None)
+            if chat_full:
+                return await chat_full(messages, options=options)
             content = await provider.chat(messages, stream=False, options=options)
-            full = {"role": "assistant", "content": content, "finish_reason": "stop"}
+            return {"role": "assistant", "content": content, "finish_reason": "stop"}
+
+        def _fb_factory(target: str):
+            async def call():
+                p = get_provider(target)
+                chat_full = getattr(p, "chat_full", None)
+                if chat_full:
+                    return await chat_full(messages, options=options)
+                content = await p.chat(messages, stream=False, options=options)
+                return {"role": "assistant", "content": content, "finish_reason": "stop"}
+            return call
+
+        full = await with_retry_and_fallback(
+            model, _primary, settings=PROVIDER_SETTINGS, fallback_call_factory=_fb_factory
+        )
     except Exception as e:
         _log_response("/v1/chat/completions", 502, str(e))
-        return JSONResponse(status_code=502, content={"error": {"message": str(e), "type": "server_error"}})
+        return JSONResponse(
+            status_code=502,
+            content={"error": {"message": str(e), "type": "server_error"}},
+        )
 
     _log_response("/v1/chat/completions", 200, f"finish={full.get('finish_reason')}")
     message = {"role": full["role"], "content": full.get("content", "")}
@@ -621,7 +682,7 @@ async def openai_chat_completions(request: Request):
         "total_tokens": 0,
     })
     return {
-        "id": f"chatcmpl-{abs(hash(str(full))):016x}",
+        "id": f"chatcmpl-{uuid.uuid4().hex[:16]}",
         "object": "chat.completion",
         "created": int(time.time()),
         "model": model,
@@ -636,7 +697,6 @@ async def openai_chat_completions(request: Request):
 
 @app.get("/v1/models")
 async def openai_list_models():
-    """OpenAI-compatible model listing."""
     models = []
     for name in PROVIDER_REGISTRY:
         models.append({
@@ -648,21 +708,16 @@ async def openai_list_models():
     return {"object": "list", "data": models}
 
 
-async def _stream_openai_chat(
-    provider, model: str, messages: list, options: dict
-) -> AsyncIterator[str]:
-    """Stream in OpenAI SSE format with proper content + tool_calls passthrough."""
-    chat_id = f"chatcmpl-{abs(hash(model)):016x}"
+async def _stream_openai_chat(provider, model: str, messages: list, options: dict) -> AsyncIterator[str]:
+    """Stream in OpenAI SSE format with content + tool_calls passthrough."""
+    chat_id = f"chatcmpl-{uuid.uuid4().hex[:16]}"
     created = int(time.time())
-    final_finish_reason = "stop"
-
-    # Use raw streaming if provider supports it (OpenAICompatProvider does)
     raw_stream = getattr(provider, "chat_stream_raw", None)
 
     try:
         if raw_stream:
             async for raw in raw_stream(messages, options=options):
-                delta = {}
+                delta: dict[str, Any] = {}
                 if "role" in raw:
                     delta["role"] = raw["role"]
                 if "content" in raw:
@@ -670,8 +725,6 @@ async def _stream_openai_chat(
                 if "tool_calls" in raw:
                     delta["tool_calls"] = raw["tool_calls"]
                 finish_reason = raw.get("finish_reason")
-                if finish_reason:
-                    final_finish_reason = finish_reason
                 if not delta and not finish_reason:
                     continue
                 data = {
@@ -679,32 +732,24 @@ async def _stream_openai_chat(
                     "object": "chat.completion.chunk",
                     "created": created,
                     "model": model,
-                    "choices": [{
-                        "index": 0,
-                        "delta": delta,
-                        "finish_reason": finish_reason,
-                    }],
+                    "choices": [{"index": 0, "delta": delta, "finish_reason": finish_reason}],
                 }
                 yield f"data: {json.dumps(data)}\n\n"
         else:
-            # Fallback for providers without raw streaming (Anthropic, Bedrock, Azure)
             async for chunk in provider.chat_stream(messages, options=options):
                 data = {
                     "id": chat_id,
                     "object": "chat.completion.chunk",
                     "created": created,
                     "model": model,
-                    "choices": [{
-                        "index": 0,
-                        "delta": {"content": chunk},
-                        "finish_reason": None,
-                    }],
+                    "choices": [
+                        {"index": 0, "delta": {"content": chunk}, "finish_reason": None}
+                    ],
                 }
                 yield f"data: {json.dumps(data)}\n\n"
     except Exception as e:
         logger.exception("Streaming error")
-        error_data = {"error": {"message": str(e), "type": "server_error"}}
-        yield f"data: {json.dumps(error_data)}\n\n"
+        yield f"data: {json.dumps({'error': {'message': str(e), 'type': 'server_error'}})}\n\n"
         yield "data: [DONE]\n\n"
         return
 
@@ -714,7 +759,6 @@ async def _stream_openai_chat(
 # ---------------------------------------------------------------------------
 # Utilities
 # ---------------------------------------------------------------------------
-
 def _iso_now() -> str:
     return time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
 

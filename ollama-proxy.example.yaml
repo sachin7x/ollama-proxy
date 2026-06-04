@@ -1,0 +1,40 @@
+# ollama-proxy configuration file (sample)
+# Run with: ollama-proxy --config ollama-proxy.yaml
+# (or set PROXY_CONFIG_FILE=ollama-proxy.yaml)
+#
+# Everything here is optional. Defaults come from environment variables.
+# ${ENV_VAR} references are expanded at load time.
+
+# -- Providers -----------------------------------------------------------------
+# Add OpenAI-compatible providers here. Built-in providers (openai, gemini,
+# anthropic, kimi, xai, groq, mistral, deepseek, together, perplexity) are
+# already known — listing them here only overrides their api_key / base_url.
+#
+# For self-hosted servers (vLLM, LM Studio, Ray Serve, etc.) just add an entry.
+providers:
+  openai:
+    api_key: ${OPENAI_API_KEY}
+    retries: 2
+    fallback: groq/llama-3.3-70b-versatile
+
+  groq:
+    api_key: ${GROQ_API_KEY}
+
+  myvllm:
+    api_key: EMPTY                              # vLLM accepts any non-empty value
+    base_url: http://localhost:8000/v1
+
+  ray:
+    api_key: ${RAY_API_KEY}
+    base_url: http://ray-head:8000/v1
+    retries: 1
+    fallback: openai/gpt-4o-mini
+
+# -- Models --------------------------------------------------------------------
+# Models listed here are added to /api/tags so they appear in client dropdowns.
+# (You can still call any prefix/model-id without registering it here.)
+models:
+  - openai/gpt-4o
+  - openai/gpt-4o-mini
+  - groq/llama-3.3-70b-versatile
+  - myvllm/meta-llama/Llama-3.1-8B-Instruct

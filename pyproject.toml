@@ -1,33 +1,89 @@
 [project]
 name = "ollama-proxy"
 version = "0.1.0"
-description = "Fake Ollama API server - routes Ollama protocol to cloud/self-hosted LLMs"
+description = "Speak the Ollama API protocol — route requests to OpenAI, Gemini, Anthropic, AWS Bedrock, Azure, Groq, xAI, Mistral, DeepSeek, Together, Perplexity, Kimi, and any OpenAI-compatible server."
 readme = "README.md"
+license = { text = "MIT" }
+authors = [{ name = "kamal" }]
 requires-python = ">=3.10"
+keywords = [
+    "ollama",
+    "llm",
+    "proxy",
+    "openai",
+    "anthropic",
+    "gemini",
+    "bedrock",
+    "groq",
+    "kimi",
+    "fastapi",
+    "copilot",
+]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Environment :: Web Environment",
+    "Framework :: FastAPI",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Internet :: WWW/HTTP :: HTTP Servers",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+    "Topic :: Software Development :: Libraries :: Python Modules",
+]
 dependencies = [
     "fastapi>=0.115.0",
     "uvicorn[standard]>=0.30.0",
     "openai>=1.50.0",
-    "anthropic>=0.40.0",
     "httpx>=0.27.0",
     "python-dotenv>=1.0.0",
+    "PyYAML>=6.0",
+]
+
+[project.optional-dependencies]
+anthropic = ["anthropic>=0.40.0"]
+bedrock = ["boto3>=1.35.0"]
+all = [
+    "anthropic>=0.40.0",
     "boto3>=1.35.0",
 ]
+
+[project.urls]
+Homepage = "https://github.com/skamalj/ollama-proxy"
+Repository = "https://github.com/skamalj/ollama-proxy"
+Issues = "https://github.com/skamalj/ollama-proxy/issues"
+
+[project.scripts]
+ollama-proxy = "ollama_proxy.cli:main"
 
 [dependency-groups]
 dev = [
     "pytest>=8.0",
     "pytest-asyncio>=0.23.0",
     "httpx>=0.27.0",
+    "ruff>=0.6.0",
 ]
 
 [build-system]
-requires      = ["hatchling"]
+requires = ["hatchling"]
 build-backend = "hatchling.build"
 
 [tool.hatch.build.targets.wheel]
-packages = ["providers"]
+packages = ["ollama_proxy"]
+
+[tool.hatch.build.targets.sdist]
+include = [
+    "/ollama_proxy",
+    "/README.md",
+    "/LICENSE",
+    "/CHANGELOG.md",
+    "/.env.example",
+]
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
-testpaths    = ["tests"]
+testpaths = ["tests"]
