@@ -2,6 +2,7 @@
 
 [![PyPI version](https://img.shields.io/pypi/v/ollama-proxy-plus.svg)](https://pypi.org/project/ollama-proxy-plus/)
 [![Python versions](https://img.shields.io/pypi/pyversions/ollama-proxy-plus.svg)](https://pypi.org/project/ollama-proxy-plus/)
+[![Docs](https://img.shields.io/badge/docs-mkdocs-blue.svg)](https://skamalj.github.io/ollama-proxy/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
 
 A lightweight server that **speaks the Ollama API protocol** and routes every
@@ -10,6 +11,8 @@ request to a cloud or self-hosted LLM backend.
 > Distributed on PyPI as **`ollama-proxy-plus`** (the `ollama-proxy` name was
 > taken). Install with `pip install ollama-proxy-plus`. Everything else —
 > import path, CLI command, endpoints — stays as `ollama-proxy`.
+
+📚 **Full documentation: https://skamalj.github.io/ollama-proxy/**
 
 Any tool that already works with Ollama — Open WebUI, Continue, Cursor,
 GitHub Copilot, LangChain, LlamaIndex, the `ollama` Python SDK — connects with

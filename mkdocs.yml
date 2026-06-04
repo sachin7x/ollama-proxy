@@ -1,0 +1,100 @@
+site_name: ollama-proxy
+site_description: Speak the Ollama API protocol — route requests to OpenAI, Gemini, Anthropic, AWS Bedrock, Azure, Groq, xAI, Mistral, DeepSeek, Together, Perplexity, Kimi, and any OpenAI-compatible server.
+site_url: https://skamalj.github.io/ollama-proxy/
+repo_url: https://github.com/skamalj/ollama-proxy
+repo_name: skamalj/ollama-proxy
+edit_uri: edit/master/docs/
+
+theme:
+  name: material
+  features:
+    - navigation.instant
+    - navigation.tracking
+    - navigation.tabs
+    - navigation.sections
+    - navigation.top
+    - navigation.indexes
+    - search.suggest
+    - search.highlight
+    - content.code.copy
+    - content.code.annotate
+    - content.action.edit
+    - toc.follow
+  palette:
+    - media: "(prefers-color-scheme: light)"
+      scheme: default
+      primary: indigo
+      accent: indigo
+      toggle:
+        icon: material/brightness-7
+        name: Switch to dark mode
+    - media: "(prefers-color-scheme: dark)"
+      scheme: slate
+      primary: indigo
+      accent: indigo
+      toggle:
+        icon: material/brightness-4
+        name: Switch to light mode
+  icon:
+    repo: fontawesome/brands/github
+
+markdown_extensions:
+  - admonition
+  - attr_list
+  - def_list
+  - footnotes
+  - md_in_html
+  - tables
+  - toc:
+      permalink: true
+  - pymdownx.details
+  - pymdownx.superfences
+  - pymdownx.tabbed:
+      alternate_style: true
+  - pymdownx.highlight:
+      anchor_linenums: true
+      line_spans: __span
+      pygments_lang_class: true
+  - pymdownx.inlinehilite
+  - pymdownx.snippets
+  - pymdownx.tasklist:
+      custom_checkbox: true
+  - pymdownx.emoji:
+      emoji_index: !!python/name:material.extensions.emoji.twemoji
+      emoji_generator: !!python/name:material.extensions.emoji.to_svg
+
+extra:
+  social:
+    - icon: fontawesome/brands/github
+      link: https://github.com/skamalj/ollama-proxy
+    - icon: fontawesome/brands/python
+      link: https://pypi.org/project/ollama-proxy-plus/
+
+plugins:
+  - search
+
+nav:
+  - Home: index.md
+  - Quick start: quickstart.md
+  - CLI reference: cli.md
+  - Providers:
+      - Overview: providers/index.md
+      - OpenAI-compatible: providers/openai-compat.md
+      - Anthropic: providers/anthropic.md
+      - Azure OpenAI: providers/azure.md
+      - AWS Bedrock: providers/bedrock.md
+      - Self-hosted servers: providers/self-hosted.md
+      - Adding a new provider: providers/adding.md
+  - Configuration:
+      - Environment variables: config/env.md
+      - YAML config file: config/yaml.md
+      - Adding models: config/models.md
+  - Reliability:
+      - Retry & fallback: reliability/retry-fallback.md
+      - Health checks: reliability/health.md
+      - Logging & tracing: reliability/logging.md
+  - Endpoints:
+      - Ollama protocol: endpoints/ollama.md
+      - OpenAI protocol: endpoints/openai.md
+  - Client examples: examples.md
+  - Changelog: changelog.md
