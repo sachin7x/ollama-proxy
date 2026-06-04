@@ -1,5 +1,5 @@
 [project]
-name = "ollama-proxy"
+name = "ollama-proxy-plus"
 version = "0.1.0"
 description = "Speak the Ollama API protocol — route requests to OpenAI, Gemini, Anthropic, AWS Bedrock, Azure, Groq, xAI, Mistral, DeepSeek, Together, Perplexity, Kimi, and any OpenAI-compatible server."
 readme = "README.md"

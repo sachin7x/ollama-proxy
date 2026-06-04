@@ -9,6 +9,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 First public PyPI release.
 
+> Distributed on PyPI as **`ollama-proxy-plus`** (the `ollama-proxy` name was
+> already taken). The Python import path remains `ollama_proxy` and the CLI
+> command is `ollama-proxy`.
+
 ### Added
 - CLI entry point: `ollama-proxy` command with `serve` (default), `doctor`,
   `list-models`, and `test` subcommands.

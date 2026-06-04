@@ -1,11 +1,15 @@
 # ollama-proxy
 
-[![PyPI version](https://img.shields.io/pypi/v/ollama-proxy.svg)](https://pypi.org/project/ollama-proxy/)
-[![Python versions](https://img.shields.io/pypi/pyversions/ollama-proxy.svg)](https://pypi.org/project/ollama-proxy/)
+[![PyPI version](https://img.shields.io/pypi/v/ollama-proxy-plus.svg)](https://pypi.org/project/ollama-proxy-plus/)
+[![Python versions](https://img.shields.io/pypi/pyversions/ollama-proxy-plus.svg)](https://pypi.org/project/ollama-proxy-plus/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
 
 A lightweight server that **speaks the Ollama API protocol** and routes every
 request to a cloud or self-hosted LLM backend.
+
+> Distributed on PyPI as **`ollama-proxy-plus`** (the `ollama-proxy` name was
+> taken). Install with `pip install ollama-proxy-plus`. Everything else —
+> import path, CLI command, endpoints — stays as `ollama-proxy`.
 
 Any tool that already works with Ollama — Open WebUI, Continue, Cursor,
 GitHub Copilot, LangChain, LlamaIndex, the `ollama` Python SDK — connects with
@@ -32,22 +36,22 @@ protocol on `/v1/*` — so it works with both ecosystems.
 
 ```bash
 # Core (OpenAI / Gemini / xAI / Groq / Mistral / DeepSeek / Together / Perplexity / Kimi / vLLM / etc.)
-pip install ollama-proxy
+pip install ollama-proxy-plus
 
 # With Anthropic SDK
-pip install "ollama-proxy[anthropic]"
+pip install "ollama-proxy-plus[anthropic]"
 
 # With AWS Bedrock support
-pip install "ollama-proxy[bedrock]"
+pip install "ollama-proxy-plus[bedrock]"
 
 # Everything
-pip install "ollama-proxy[all]"
+pip install "ollama-proxy-plus[all]"
 ```
 
 Or run without installing using `uv`:
 
 ```bash
-uvx ollama-proxy
+uvx ollama-proxy-plus
 ```
 
 ## Quick start
@@ -193,9 +197,9 @@ Any OpenAI-compatible REST server works the same way (typical defaults):
 
 | Prefix | Provider | Auth | Install |
 |--------|----------|------|---------|
-| `anthropic/` | Anthropic / Claude | `ANTHROPIC_API_KEY` | `pip install ollama-proxy[anthropic]` |
+| `anthropic/` | Anthropic / Claude | `ANTHROPIC_API_KEY` | `pip install ollama-proxy-plus[anthropic]` |
 | `azure/` | Azure OpenAI | `AZURE_OPENAI_*` vars | (core) |
-| `bedrock/` | AWS Bedrock | AWS credential chain | `pip install ollama-proxy[bedrock]` |
+| `bedrock/` | AWS Bedrock | AWS credential chain | `pip install ollama-proxy-plus[bedrock]` |
 
 ---
 

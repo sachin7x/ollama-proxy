@@ -21,7 +21,7 @@ class AnthropicProvider(BaseProvider):
         except ImportError as e:
             raise ImportError(
                 "Anthropic provider requires the 'anthropic' package. "
-                "Install with: pip install ollama-proxy[anthropic]"
+                "Install with: pip install 'ollama-proxy-plus[anthropic]'"
             ) from e
         self.client = anthropic.AsyncAnthropic(api_key=api_key)
 

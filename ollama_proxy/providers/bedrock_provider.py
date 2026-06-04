@@ -32,7 +32,7 @@ class BedrockProvider(BaseProvider):
         except ImportError as e:
             raise ImportError(
                 "Bedrock provider requires the 'boto3' package. "
-                "Install with: pip install ollama-proxy[bedrock]"
+                "Install with: pip install 'ollama-proxy-plus[bedrock]'"
             ) from e
         session_kwargs = {}
         if profile:
