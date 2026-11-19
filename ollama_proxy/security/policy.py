@@ -41,8 +41,13 @@ class PolicyEngine:
             return PolicyDecision.DENY, "capability is not granted for this task"
         if context.requested_capability not in self.policy.capability_risks:
             return PolicyDecision.DENY, "unknown capabilities are denied by default"
+        if context.requested_capability == "network.egress" and not context.destination_domain:
+            return PolicyDecision.DENY, "network egress requires an explicit destination domain"
         if context.destination_domain:
-            host = context.destination_domain.lower().rstrip(".")
+            try:
+                host = self.normalize_domain(context.destination_domain)
+            except ValueError:
+                return PolicyDecision.DENY, "invalid destination domain"
             if host not in allowed_domains:
                 return PolicyDecision.DENY, "destination domain is not allowlisted"
         if (self.policy.block_tainted_to_sensitive_sinks
