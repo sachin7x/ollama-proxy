@@ -84,6 +84,26 @@ async def test_domain_allowlist_is_enforced(kernel):
     decision = await kernel.execute(identity, grant, ctx, lambda: "unexpected")
     assert decision.decision is PolicyDecision.DENY
 
+@pytest.mark.asyncio
+async def test_network_egress_requires_declared_destination(kernel):
+    manifest, identity = register(kernel)
+    grant = kernel.identities.issue_grant(manifest, "task-1", {"network.egress"})
+    ctx = ExecutionContext("agent.test", "task-1", "Fetch data", "network.egress",
+                           "http.get", approval_granted=True)
+    decision = await kernel.execute(identity, grant, ctx, lambda: "unexpected")
+    assert decision.decision is PolicyDecision.DENY
+
+
+@pytest.mark.asyncio
+async def test_invalid_destination_is_denied(kernel):
+    manifest, identity = register(kernel)
+    grant = kernel.identities.issue_grant(manifest, "task-1", {"network.egress"})
+    ctx = ExecutionContext("agent.test", "task-1", "Fetch data", "network.egress",
+                           "http.get", approval_granted=True,
+                           destination_domain="https://api.example.com@evil.example")
+    decision = await kernel.execute(identity, grant, ctx, lambda: "unexpected")
+    assert decision.decision is PolicyDecision.DENY
+
 
 @pytest.mark.asyncio
 async def test_revoked_identity_is_denied(kernel):
