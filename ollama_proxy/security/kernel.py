@@ -37,6 +37,12 @@ class SecurityKernel:
                       operation: Callable[[], Any | Awaitable[Any]]) -> ExecutionDecision:
         event = {"agent_id": context.agent_id, "task_id": context.task_id,
                  "capability": context.requested_capability, "action": context.action}
+        if not callable(operation):
+            recorded = self.audit.append("tool.execution_blocked", {
+                **event, "decision": PolicyDecision.DENY.value,
+                "reason": "operation must be callable",
+            })
+            return ExecutionDecision(PolicyDecision.DENY, "operation must be callable", recorded["id"])
         try:
             manifest = self.identities.verify(identity)
             if context.agent_id != identity.agent_id:
